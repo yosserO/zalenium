@@ -83,7 +83,7 @@ WaitSeleniumHub()
     # Other option is to wait for certain text at
     #  logs/stdout.zalenium.hub.log
     while ! curl -sSL "http://localhost:4444${CONTEXT_PATH}/wd/hub/status" 2>&1 \
-            | jq -r '.status' 2>&1 | grep "0" >/dev/null; do
+            | jq -r '.status' 2>/dev/null | grep "0" >/dev/null; do
         echo -n '.'
         sleep 0.2
     done
@@ -489,6 +489,7 @@ StartUp()
     # In nginx.conf, Replace {{contextPath}} with value of APPEND_CONTEXT_PATH
     sed -i.bak "s~{{contextPath}}~${CONTEXT_PATH}~" /home/seluser/nginx.conf
     sed -i.bak "s~{{nginxMaxBodySize}}~${NGINX_MAX_BODY_SIZE}~" /home/seluser/nginx.conf
+    sed -i.bak "s~{{zaleniumVersion}}~${project.version}~" /home/seluser/error.html
 
     echo "Starting Nginx reverse proxy..."
     nginx -c /home/seluser/nginx.conf

@@ -34,6 +34,7 @@ public class TestInformation {
     private String platform;
     private String platformVersion;
     private String fileName;
+    private int fileCount = 0;
     private String fileExtension;
     private String videoUrl;
     private List<String> logUrls;
@@ -59,6 +60,10 @@ public class TestInformation {
 
     public void setVideoRecorded(boolean videoRecorded) {
         this.videoRecorded = videoRecorded;
+    }
+
+    public String getTestNameNoExtension() {
+        return testNameNoExtension;
     }
 
     public String getVideoFolderPath() {
@@ -107,6 +112,10 @@ public class TestInformation {
 
     public String getFileName() {
         return fileName;
+    }
+
+    public int getFileCount() {
+        return fileCount;
     }
 
     public List<String> getLogUrls() {
@@ -214,12 +223,13 @@ public class TestInformation {
 
         this.testNameNoExtension = this.testFileNameTemplate
                 .replace("{proxyName}", this.proxyName.toLowerCase())
+                .replace("{seleniumSessionId}", this.seleniumSessionId)
                 .replace("{testName}", getTestName())
                 .replace("{browser}", this.browser)
                 .replace("{platform}", this.platform)
                 .replace("{timestamp}", commonProxyUtilities.getDateAndTimeFormatted(this.timestamp))
                 .replace("{testStatus}", getTestStatus().toString())
-                .replaceAll("[^a-zA-Z0-9]", "_");
+                .replaceAll("[^a-zA-Z0-9/\\-]", "_");
 
         this.fileName = FILE_NAME_TEMPLATE.replace("{fileName}", testNameNoExtension)
                 .replace("{fileExtension}", fileExtension);
@@ -238,6 +248,12 @@ public class TestInformation {
 
     public JsonObject getMetadata() { return this.metadata;}
     public void setMetadata(JsonObject metadata) { this.metadata = metadata;}
+
+    public void setTestName(String name) { this.testName = name;}
+
+    public void setFileCount(int fileCount) {
+        this.fileCount = fileCount;
+    }
 
     public boolean equals(Object obj) {
         if (obj == null) return false;

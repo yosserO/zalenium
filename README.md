@@ -11,7 +11,15 @@
 [![Slack](https://img.shields.io/badge/chat-on%20slack-red.svg?logo=slack)](https://seleniumhq.herokuapp.com)
 
 
+# :exclamation: This project is not being developed anymore. We will only reply to issues and to questions in the Zalenium Slack channel.  
+## The last Zalenium release was [3.141.59z](https://github.com/zalando/zalenium/releases/tag/3.141.59z)
+### From now on, we will spend our time just replying to new issues and answering questions at the Zalenium Slack channel. 
+### Unfortunately, no new maintainers were found and this project won't be developed anymore.
+### The most relevant features from Zalenium are being/will be implemented in the upstream Grid 4.x, keep an eye on https://github.com/seleniumhq/docker-selenium/. You could migrate to this project in the near future.
+### We want to truly thank all of our users for making this a great project, helping us spread the word and improve the testing community ❤️ This project was made for the community and by the community!
 
+
+--- 
 
 
 This is a Selenium Grid extension to scale your local grid dynamically with docker containers. It uses

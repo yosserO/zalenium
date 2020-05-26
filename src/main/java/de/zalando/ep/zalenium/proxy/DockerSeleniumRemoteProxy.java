@@ -1,9 +1,11 @@
 package de.zalando.ep.zalenium.proxy;
 
 import java.io.IOException;
+import java.nio.file.CopyOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -15,6 +17,8 @@ import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import de.zalando.ep.zalenium.streams.InputStreamDescriptor;
+import de.zalando.ep.zalenium.streams.InputStreamGroupIterator;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.lang3.StringUtils;
@@ -102,6 +106,7 @@ public class DockerSeleniumRemoteProxy extends DefaultRemoteProxy {
     private long cleanupStartedTime = 0;
     private AtomicBoolean timedOut = new AtomicBoolean(false);
     private long timeRegistered = System.currentTimeMillis();
+    private boolean stopRecordingByCookie = false;
 
     public DockerSeleniumRemoteProxy(RegistrationRequest request, GridRegistry registry) {
         super(request, registry);
@@ -252,42 +257,13 @@ public class DockerSeleniumRemoteProxy extends DefaultRemoteProxy {
         }
 
         LOGGER.debug("Creating session for {}", requestedCapability);
-        String browserName = requestedCapability.get(CapabilityType.BROWSER_NAME).toString();
-        testName = getCapability(requestedCapability, ZaleniumCapabilityType.TEST_NAME, "");
-        String seleniumSessionId = newSession.getExternalKey() != null ?
-                newSession.getExternalKey().getKey() :
-                newSession.getInternalKey();
-        if (testName.isEmpty()) {
-            testName = seleniumSessionId;
-        }
-        testBuild = getCapability(requestedCapability, ZaleniumCapabilityType.BUILD_NAME, "");
-        if (requestedCapability.containsKey(ZaleniumCapabilityType.RECORD_VIDEO)) {
-            boolean videoRecording = Boolean.parseBoolean(getCapability(requestedCapability, ZaleniumCapabilityType.RECORD_VIDEO, "true"));
-            setVideoRecordingEnabledSession(videoRecording);
-        }
-        String testFileNameTemplate = getCapability(requestedCapability, ZaleniumCapabilityType.TEST_FILE_NAME_TEMPLATE, "");
-        String screenResolution = getCapability(newSession.getSlot().getCapabilities(), ZaleniumCapabilityType.SCREEN_RESOLUTION, "N/A");
-        String browserVersion = getCapability(newSession.getSlot().getCapabilities(), CapabilityType.VERSION, "");
-        String timeZone = getCapability(newSession.getSlot().getCapabilities(), ZaleniumCapabilityType.TIME_ZONE, "N/A");
-        testInformation = new TestInformation.TestInformationBuilder()
-                .withTestName(testName)
-                .withSeleniumSessionId(seleniumSessionId)
-                .withProxyName("Zalenium")
-                .withBrowser(browserName)
-                .withBrowserVersion(browserVersion)
-                .withPlatform(Platform.LINUX.name())
-                .withScreenDimension(screenResolution)
-                .withTimeZone(timeZone)
-                .withTestFileNameTemplate(testFileNameTemplate)
-                .withBuild(testBuild)
-                .withTestStatus(TestInformation.TestStatus.COMPLETED)
-                .build();
-        testInformation.setVideoRecorded(isVideoRecordingEnabled());
+
         maxTestIdleTimeSecs = getConfiguredIdleTimeout(requestedCapability);
 
         lastCommandTime = System.currentTimeMillis();
 
         setThreadName(currentName);
+        ensureTestInformation(newSession);
         return newSession;
     }
 
@@ -318,6 +294,7 @@ public class DockerSeleniumRemoteProxy extends DefaultRemoteProxy {
     @Override
     public void beforeCommand(TestSession session, HttpServletRequest request, HttpServletResponse response) {
         String currentName = configureThreadName();
+        ensureTestInformation(session);
         super.beforeCommand(session, request, response);
         LOGGER.debug("lastCommand: {} - executing...", request.getMethod(), request.getPathInfo());
         if (request instanceof WebDriverRequest && "POST".equalsIgnoreCase(request.getMethod())) {
@@ -349,6 +326,27 @@ public class DockerSeleniumRemoteProxy extends DefaultRemoteProxy {
                         processContainerAction(DockerSeleniumContainerAction.CLEAN_NOTIFICATION, getContainerId());
                         processContainerAction(DockerSeleniumContainerAction.SEND_NOTIFICATION, messageCommand,
                                 getContainerId());
+                    }
+                    if ("zaleniumVideo".equalsIgnoreCase(cookieName)) {
+                        boolean recordVideo = Boolean.parseBoolean(cookie.get("value").getAsString());
+                        if (recordVideo && !isVideoRecordingEnabled()) {
+                            setVideoRecordingEnabledSession(true);
+                            testInformation.setVideoRecorded(true);
+                            stopRecordingByCookie = false;
+                            videoRecording(DockerSeleniumContainerAction.START_RECORDING);
+                        } else if (!recordVideo && isVideoRecordingEnabled()){
+                            stopRecordingByCookie = true;
+                            videoRecording(DockerSeleniumContainerAction.STOP_RECORDING);
+                            setVideoRecordingEnabledSession(false);
+                            testInformation.setVideoRecorded(false);
+                        }
+                    }
+                    if ("zaleniumTestName".equalsIgnoreCase(cookieName)) {
+                        String newTestName = cookie.get("value").getAsString();
+                        if (!newTestName.isEmpty()) {
+                            testName = newTestName;
+                            testInformation.setTestName(testName);
+                        }
                     }
                     else if(CommonProxyUtilities.metadataCookieName.equalsIgnoreCase(cookieName)) {
                         JsonParser jsonParser = new JsonParser();
@@ -384,6 +382,52 @@ public class DockerSeleniumRemoteProxy extends DefaultRemoteProxy {
         }
         this.lastCommandTime = System.currentTimeMillis();
         setThreadName(currentName);
+    }
+
+    private void ensureTestInformation(TestSession session) {
+        String seleniumSessionId = session.getExternalKey() != null ?
+                session.getExternalKey().getKey() :
+                session.getInternalKey();
+
+        if(testInformation != null && testInformation.getSeleniumSessionId().equals(seleniumSessionId)) {
+            return;
+        }
+        Map<String, Object> requestedCapability = session.getRequestedCapabilities();
+
+        LOGGER.info("External ssid {} internal {} ", session.getExternalKey(), session.getInternalKey());
+
+
+        String browserName = requestedCapability.get(CapabilityType.BROWSER_NAME).toString();
+        testName = getCapability(requestedCapability, ZaleniumCapabilityType.TEST_NAME, "");
+
+        if (testName.isEmpty()) {
+            testName = seleniumSessionId;
+        }
+        testBuild = getCapability(requestedCapability, ZaleniumCapabilityType.BUILD_NAME, "");
+        if (requestedCapability.containsKey(ZaleniumCapabilityType.RECORD_VIDEO)) {
+            boolean videoRecording = Boolean.parseBoolean(getCapability(requestedCapability, ZaleniumCapabilityType.RECORD_VIDEO, "true"));
+            setVideoRecordingEnabledSession(videoRecording);
+        }
+        String testFileNameTemplate = getCapability(requestedCapability, ZaleniumCapabilityType.TEST_FILE_NAME_TEMPLATE, "");
+        String screenResolution = getCapability(session.getSlot().getCapabilities(), ZaleniumCapabilityType.SCREEN_RESOLUTION, "N/A");
+        String browserVersion = getCapability(session.getSlot().getCapabilities(), CapabilityType.VERSION, "");
+        String timeZone = getCapability(session.getSlot().getCapabilities(), ZaleniumCapabilityType.TIME_ZONE, "N/A");
+        testInformation = new TestInformation.TestInformationBuilder()
+                .withTestName(testName)
+                .withSeleniumSessionId(seleniumSessionId)
+                .withProxyName("Zalenium")
+                .withBrowser(browserName)
+                .withBrowserVersion(browserVersion)
+                .withPlatform(Platform.LINUX.name())
+                .withScreenDimension(screenResolution)
+                .withTimeZone(timeZone)
+                .withTestFileNameTemplate(testFileNameTemplate)
+                .withBuild(testBuild)
+                .withTestStatus(TestInformation.TestStatus.COMPLETED)
+                .build();
+        testInformation.setVideoRecorded(isVideoRecordingEnabled());
+
+        super.beforeSession(session);
     }
 
     @Override
@@ -612,6 +656,9 @@ public class DockerSeleniumRemoteProxy extends DefaultRemoteProxy {
         if (keepVideoAndLogs()) {
             if (DockerSeleniumContainerAction.STOP_RECORDING == action) {
                 copyVideos(containerId);
+                if (stopRecordingByCookie) {
+                    DashboardCollection.updateDashboard(testInformation);
+                }
             }
             if (DockerSeleniumContainerAction.TRANSFER_LOGS == action) {
                 copyLogs(containerId);
@@ -627,23 +674,29 @@ public class DockerSeleniumRemoteProxy extends DefaultRemoteProxy {
         }
         String currentName = configureThreadName();
         boolean videoWasCopied = false;
-        TarArchiveInputStream tarStream = new TarArchiveInputStream(containerClient.copyFiles(containerId, "/videos/"));
+        InputStreamGroupIterator tarStream = containerClient.copyFiles(containerId, "/videos/");
         try {
-            TarArchiveEntry entry;
-            while ((entry = tarStream.getNextTarEntry()) != null) {
-                if (entry.isDirectory()) {
-                    continue;
-                }
-                String fileExtension = entry.getName().substring(entry.getName().lastIndexOf('.'));
+            InputStreamDescriptor entry;
+            while ((entry = tarStream.next()) != null) {
+                String fileExtension = entry.name().substring(entry.name().lastIndexOf('.'));
                 testInformation.setFileExtension(fileExtension);
                 Path videoFile = Paths.get(String.format("%s/%s", testInformation.getVideoFolderPath(),
                         testInformation.getFileName()));
-                if (!Files.exists(Paths.get(testInformation.getVideoFolderPath()))) {
-                    Files.createDirectories(Paths.get(testInformation.getVideoFolderPath()));
+                if (!Files.exists(videoFile.getParent())) {
+                    Files.createDirectories(videoFile.getParent());
                 }
-                Files.copy(tarStream, videoFile);
+
+                //For multiple recording in one session, add '_{count}' to the test name
+                if (Files.exists(videoFile)) {
+                    testInformation.setTestName(testName + "_" + testInformation.getFileCount());
+                    testInformation.buildVideoFileName();
+                    videoFile = Paths.get(String.format("%s/%s", testInformation.getVideoFolderPath(),
+                            testInformation.getFileName()));
+                }
+                Files.copy(entry.get(), videoFile, StandardCopyOption.REPLACE_EXISTING);
                 CommonProxyUtilities.setFilePermissions(videoFile);
                 videoWasCopied = true;
+                testInformation.setFileCount(testInformation.getFileCount() + 1);
                 LOGGER.debug("Video file copied to: {}/{}", testInformation.getVideoFolderPath(), testInformation.getFileName());
             }
         } catch (IOException e) {
@@ -675,21 +728,18 @@ public class DockerSeleniumRemoteProxy extends DefaultRemoteProxy {
             return;
         }
         String currentName = configureThreadName();
-        TarArchiveInputStream tarStream = new TarArchiveInputStream(containerClient.copyFiles(containerId, "/var/log/cont/"));
+        InputStreamGroupIterator tarStream = containerClient.copyFiles(containerId, "/var/log/cont/");
         try {
-            TarArchiveEntry entry;
-            while ((entry = tarStream.getNextTarEntry()) != null) {
-                if (entry.isDirectory()) {
-                    continue;
-                }
+            InputStreamDescriptor entry;
+            while ((entry = tarStream.next()) != null) {
                 if (!Files.exists(Paths.get(testInformation.getLogsFolderPath()))) {
                     Path directories = Files.createDirectories(Paths.get(testInformation.getLogsFolderPath()));
                     CommonProxyUtilities.setFilePermissions(directories);
                     CommonProxyUtilities.setFilePermissions(directories.getParent());
                 }
-                String fileName = entry.getName().replace("cont/", "");
+                String fileName = entry.name().replace("cont/", "");
                 Path logFile = Paths.get(String.format("%s/%s", testInformation.getLogsFolderPath(), fileName));
-                Files.copy(tarStream, logFile);
+                Files.copy(entry.get(), logFile);
                 CommonProxyUtilities.setFilePermissions(logFile);
             }
             LOGGER.debug("Logs copied to: {}", testInformation.getLogsFolderPath());
@@ -749,22 +799,25 @@ public class DockerSeleniumRemoteProxy extends DefaultRemoteProxy {
     private void cleanupNode(boolean willShutdown) {
         // This basically means that the node is cleaning up and will receive a new request soon
         // willShutdown == true => there won't be a next session
-        this.setCleaningMarker(!willShutdown);
+        if (!isCleaningUp()) {
+            this.setCleaningMarker(!willShutdown);
 
-        try {
-            if (testInformation != null) {
-                processContainerAction(DockerSeleniumContainerAction.SEND_NOTIFICATION,
+            try {
+                if (testInformation != null) {
+                    processContainerAction(DockerSeleniumContainerAction.SEND_NOTIFICATION,
                         testInformation.getTestStatus().getTestNotificationMessage(), getContainerId());
-            }
-            videoRecording(DockerSeleniumContainerAction.STOP_RECORDING);
-            processContainerAction(DockerSeleniumContainerAction.TRANSFER_LOGS, getContainerId());
-            processContainerAction(DockerSeleniumContainerAction.CLEANUP_CONTAINER, getContainerId());
+                }
+                videoRecording(DockerSeleniumContainerAction.STOP_RECORDING);
+                processContainerAction(DockerSeleniumContainerAction.TRANSFER_LOGS, getContainerId());
+                processContainerAction(DockerSeleniumContainerAction.CLEANUP_CONTAINER,
+                    getContainerId());
 
-            if (testInformation != null && keepVideoAndLogs()) {
-                DashboardCollection.updateDashboard(testInformation);
+                if (testInformation != null && keepVideoAndLogs()) {
+                    DashboardCollection.updateDashboard(testInformation);
+                }
+            } finally {
+                this.unsetCleaningMarker();
             }
-        } finally {
-            this.unsetCleaningMarker();
         }
     }
 

@@ -41,10 +41,7 @@ After starting Minikube locally, follow these steps:
 {% highlight shell %}
     cd zalenium
     kubectl create namespace zalenium
-    helm init --client-only
-    helm template --name zalenium \
-        --set hub.serviceType=NodePort \
-        charts/zalenium | kubectl -n zalenium apply -f -
+    helm install zalenium --namespace zalenium charts/zalenium --set hub.serviceType=NodePort
 {% endhighlight %}
 
 * Go to the Minikube dashboard and check the deployment, also open the Grid Console
@@ -77,7 +74,7 @@ uses role based authentication by default, meaning that the service account will
 the Kubernetes API that it needs to.
 
 By default, the helm chart will create a `ServiceAccount` with an appropriate `Role` and `RoleBinding` at the namespace level.
-You can see the `Role` that will be created [here](https://github.com/zalando/zalenium/tree/master/charts/zalenium/template/role.yaml){:target="_blank"}.
+You can see the `Role` that will be created [here](https://github.com/zalando/zalenium/tree/master/charts/zalenium/templates/role.yaml){:target="_blank"}.
 
 If your cluster does not have RBAC enabled, you can disable it with `--set rbac.create=false` and `--set serviceAccount.create=false`.
 You can also use a predefined `ServiceAccount` with `--set rbac.create=false` and `--set serviceAccount.create=false` and `--set serviceAccount.name=foo`.

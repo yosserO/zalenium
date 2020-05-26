@@ -2,9 +2,9 @@
 # Find latest images at https://hub.docker.com/r/library/ubuntu/
 # Layer size: big: ~130 MB
 
-FROM ubuntu:xenial-20181113
+FROM ubuntu:xenial-20191024
 ENV UBUNTU_FLAVOR="xenial" \
-    UBUNTU_DATE="20181113"
+    UBUNTU_DATE="20191024"
 ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu
 
 #== Ubuntu flavors - common
@@ -356,6 +356,7 @@ ENV ZAL_VER="${project.build.finalName}" \
     TESTINGBOT_TUNNEL_OPTS="--se-port 4447" \
     TESTINGBOT_TUNNEL="false" \
     TESTINGBOT_WAIT_TIMEOUT="2m" \
+    TESTINGBOT_TUNNEL_ID="zalenium" \
     CBT_TUNNEL_ID="zalenium" \
     CBT_TUNNEL="false" \
     LT_TUNNEL_ID="zalenium" \
@@ -366,7 +367,7 @@ ENV ZAL_VER="${project.build.finalName}" \
     SELENIUM_WAIT_FOR_CONTAINER="true"
 
 COPY entry.sh log warn error /usr/bin/
-COPY nginx.conf /home/seluser/
+COPY nginx.conf error.html /home/seluser/
 COPY css/ /home/seluser/css/
 COPY js/ /home/seluser/js/
 COPY img/ /home/seluser/img/
@@ -390,6 +391,8 @@ COPY zalenium.sh \
  logback.xml \
  /home/seluser/
 COPY scm-source.json /
+
+RUN mkdir /home/seluser/videos
 
 #-----------------#
 # Fix perms again #
